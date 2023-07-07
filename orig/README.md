@@ -1,12 +1,4 @@
-# SmartportSD FAT version 1.15.x
-
-This is an enhancement of the SmartportSD 1.15 project which can be found over on [Gitlab](https://gitlab.com/tersteeg/smartportsd).  
-
-The updates contained here improve the active/starting drive selection process.  It also shows the current drive selected as well.
-
----
-
-Original readme follows:
+# SmartportSD FAT version 1.15
 
 This is an enhancement of the [SmartportCFA/SmartportSD](http://www.users.on.net/~rjustice/SmartportCFA/SmartportCFA.htm) project by Robert Justice and Andrea Ottaviani. Instead of relying on four raw disk images written sequentially to an SD card, this version allows you to have up to four files on a FAT or FAT32 formatted SD card instead.
 
