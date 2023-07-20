@@ -26,8 +26,9 @@
 //
 // 1.15 - Now uses FAT filesystem on the SD card instead of raw layout.
 //
-// 1.15.A - yorgle@gmail.com - 2022-07 - eject button UI changes, wiring section added
-// 1.15.B - yorgle@gmail.com - 2023-07 -
+// 1.15.A - SL/yorgle@gmail.com - 2022-07 - eject button UI changes, wiring section added
+// 1.15.B - SL/yorgle@gmail.com - 2023-07 - Additional UI tweaks
+// 1.15.C - SL/yorgle@gmail.com - 2023-07-19 - Added different Read/Write LEDs, testmode (hold eject when resetting)
 //
 // Apple disk interface is connected as follows:
 // wrprot = pa5 (ack) (output)
@@ -81,20 +82,23 @@ Arduino Uno
     A5 - WRPROT     (20.20) (19.10)
 
 
-(*) LED circuit
+(*) LED circuit:
 
     (data pin)----wwwww----|>|-----(GND)
                   330 ohm  LED
 
-(**) Button circuit
+
+(**) Button circuit:
 
                          |
                        --+--
-    (data pin)----+----o   o----(+5v)
-                  |
-                  +----wwwww----(GND)
-                       10kohm
+    (data pin)----+----o   o----(GND)
 
+NOTE (SL): for 1.15.C this has been changed from the original.  It is 
+simplified to reduce part count. The original had a 10k pulldown on the data 
+pin, and the button shorted the data pin to +5v. This updated version uses
+the atmega's internal pullups, and dhe switch shorts to ground instead; 
+backwards from the original.
 
 
 Disk Drive connector (20 pin)
@@ -112,12 +116,16 @@ Disk Drive connector (20 pin)
 
 D-19 connector - requires a male end to plug into the computer
 
-
     WPT  DR2  12v  12v  5v  -12v  GND  GND  GND  GND
     10    9    8    7    6    5    4    3    2    1
 
        19   18   17   16   15   14   13   12   11
        WR   RD   DR1  SEL  WRQ  PH3  PH2  PH1  PH0
+
+
+NOTE (SL): If there was a way to detect a system reset, it 
+would be really nice to connect that reset to the arduino's
+reset line so it could reset with it.  Oh well.
 
 */
 #include <SPI.h>
@@ -143,15 +151,27 @@ D-19 connector - requires a male end to plug into the computer
 #define PORT_ACK    PORTC   // Define the PORT to ACK
 #define PIN_ACK     5     // Define the PIN number to ACK
 
+
+#define kEjectPin   (17)       // A3 - eject button pin
+
+
 #define kLED_D0   (A0)  // green - drive 0
 #define kLED_D1   (A1)  // green - drive 1
 #define kLED_D2   (A2)  // green - drive 2
 #define kLED_D3   (9)   // green - drive 3
 
-#define kPinError   (8)   // red - error LED
-#define kPinStatus   (A4)  // yellow - statusledPin 18
+#define kLED_Yellow   (18)  // yellow - error LED
+#define kLED_Red      (8) // red - access LED
 
-#define NUM_PARTITIONS  4         // Number of 32MB Prodos partions supported
+// logical assigns
+#define kPinError   (kLED_Yellow)
+#define kPinAccess  (kLED_Red)
+
+#define kLED_Read  (kLED_Yellow)
+#define kLED_Write (kLED_Red)
+
+
+#define NUM_PARTITIONS  4         // Number of 32MB Prodos partions supported (needs to be 4.)
 
 // error codes to display on the drive LEDs
 #define kERROR_GENERAL     (0x00)
@@ -214,8 +234,8 @@ uiState state=startup;
 // Adafruit SD shields and modules: pin 10
 
 const uint8_t chipSelect = 10;
-const uint8_t ejectPin = 17;       // A3
-const uint8_t statusledPin = 18;   // A4
+//const uint8_t kEjectPin = 17;       // A3 (defined above)
+//const uint8_t statusledPin = 18;   // A4 (defined above)
 
 // Don't actually use this, deprecated for simplicity
 // Set USE_SDIO to zero for SPI card access.
@@ -277,7 +297,10 @@ void setup() {
   Serial.print(initPartition, DEC);
 #endif
 
-  pinMode(ejectPin, INPUT);
+  pinMode(kEjectPin, INPUT_PULLUP );
+
+  while (digitalRead(kEjectPin) == LOW) testmode();
+
   print_hd_info(); //bad! something that prints things shouldn't do essential setup
 
 #ifdef DO_SERIAL_OUTPUT
@@ -311,7 +334,11 @@ void setup() {
     Serial.print(freeMemory(), DEC);
 #endif
   }  
-  pinMode( kPinError, OUTPUT );
+  pinMode( kLED_Yellow, OUTPUT );
+  pinMode( kLED_Red, OUTPUT );
+
+  digitalWrite( kLED_Yellow, LOW );
+  digitalWrite( kLED_Red, LOW );
 
   // show the available drives
   drive_leds( showleds );
@@ -321,6 +348,30 @@ void setup() {
   // next show the boot partition.
   showleds = 1 << initPartition;
   drive_leds( showleds );
+}
+
+void testmode()
+{
+  unsigned char counter = 0;
+  pinMode( kLED_Yellow, OUTPUT );
+  pinMode( kLED_Red, OUTPUT );
+
+  digitalWrite( kLED_Yellow, LOW );
+  digitalWrite( kLED_Red, LOW );
+
+  while( 1 ) {
+    drive_leds( counter++ );
+    digitalWrite( kLED_Yellow, HIGH );
+    delay( 100 );
+    digitalWrite( kLED_Yellow, LOW );
+    delay( 400 );
+    
+    drive_leds( counter++ );
+    digitalWrite( kLED_Red, HIGH );
+    delay( 100 );
+    digitalWrite( kLED_Red, LOW );
+    delay( 100 );
+  }
 }
 
 //*****************************************************************************
@@ -353,7 +404,7 @@ void loop() {
   while (1) {
     state = smartport;
 
-    if (digitalRead(ejectPin) == HIGH) rotate_boot();
+    if (digitalRead(kEjectPin) == LOW) rotate_boot();
     
 
     noid = 0;  //reset noid flag
@@ -500,7 +551,7 @@ void loop() {
         switch (packet_buffer[14]) {
 
           case 0x80:  //is a status cmd
-            digitalWrite(statusledPin, HIGH);
+            digitalWrite(kLED_Read, HIGH);
             source = packet_buffer[6];
             for (partition = 0; partition < NUM_PARTITIONS; partition++) { //Check if its one of ours
               if (devices[(partition + initPartition) % NUM_PARTITIONS].device_id == source
@@ -540,7 +591,7 @@ void loop() {
                 interrupts();
                 //printf_P(PSTR("\r\nSent Packet Data\r\n") );
                 //print_packet ((unsigned char*) packet_buffer,packet_length());
-                digitalWrite(statusledPin, LOW);
+                digitalWrite(kLED_Read, LOW);
               }
             }
             break;
@@ -560,7 +611,7 @@ void loop() {
             break;
 
           case 0xC0:  //Extended status cmd
-            digitalWrite(statusledPin, HIGH);
+            digitalWrite(kLED_Read, HIGH);
             source = packet_buffer[6];
             //Serial.println(source, HEX);
             for (partition = 0; partition < NUM_PARTITIONS; partition++) { //Check if its one of ours
@@ -588,7 +639,7 @@ void loop() {
                 //printf_P(PSTR("\r\nSent Packet Data\r\n") );
                 //print_packet ((unsigned char*) packet_buffer,packet_length());
                 //Serial.print(F("\r\nStatus CMD"));
-                digitalWrite(statusledPin, LOW);
+                digitalWrite(kLED_Read, LOW);
               }
             }
             //Serial.print(F("\r\nHere's our reply!"));
@@ -622,7 +673,7 @@ void loop() {
                 // partition number indicates which 32mb block we access on the CF
                 // block_num = block_num + (((partition + initPartition) % 4) * 65536);
 
-                digitalWrite(statusledPin, HIGH);
+                digitalWrite(kPinAccess, HIGH);
                 Serial.print(F("\r\nID: "));
                 Serial.print(source);
                 Serial.print(F("Read Block: "));
@@ -644,7 +695,7 @@ void loop() {
                 DDRD = 0x00; //set rd back to input so back to tristate
                 interrupts();
                 //if (status == 1)Serial.print(F("\r\nSent err."));
-                digitalWrite(statusledPin, LOW);
+                digitalWrite(kPinAccess, LOW);
 
                 //Serial.print(status);
                 //print_packet ((unsigned char*) packet_buffer,packet_length());
@@ -678,7 +729,7 @@ void loop() {
                 // partition number indicates which 32mb block we access on the CF
                 // block_num = block_num + (((partition + initPartition) % 4) * 65536);
 
-                digitalWrite(statusledPin, HIGH);
+                digitalWrite(kLED_Read, HIGH);
                 /*Serial.print(F("\r\nID: "));
                 Serial.print(source);
                 Serial.print(F("Read Block: "));
@@ -715,7 +766,7 @@ void loop() {
                 DDRD = 0x00; //set rd back to input so back to tristate
                 interrupts();
                 //if (status == 1)Serial.print(F("\r\nSent err."));
-                digitalWrite(statusledPin, LOW);
+                digitalWrite(kLED_Read, LOW);
 
                 //Serial.print(status);
                 //print_packet ((unsigned char*) packet_buffer,packet_length());
@@ -750,7 +801,7 @@ void loop() {
                   //write block to CF card
                   //Serial.print(F("\r\nWrite Bl. n.r: "));
                   //Serial.print(block_num);
-                  digitalWrite(statusledPin, HIGH);
+                  digitalWrite(kLED_Write, HIGH);
                   // TODO: add file object lookup
                   if (!devices[(partition + initPartition) % NUM_PARTITIONS].sdf.seekSet(block_num*512)){
 
@@ -781,7 +832,7 @@ void loop() {
 
                 //print_packet ((unsigned char*) packet_buffer,packet_length());
               }
-              digitalWrite(statusledPin, LOW);
+              digitalWrite(kLED_Write, LOW);
 
             }
             break;
@@ -1596,9 +1647,9 @@ void print_hd_info(void)
 #endif
     led_err( kERROR_INIT_CARD );
   } else {
-    digitalWrite(statusledPin, HIGH);
+    digitalWrite(kLED_Yellow, HIGH);
     delay(100);
-    digitalWrite(statusledPin, LOW);
+    digitalWrite(kLED_Red, LOW);
     delay(100);
   }
   
@@ -1607,9 +1658,9 @@ void print_hd_info(void)
     Serial.print(F("\r\nError init card"));
     led_err();
   } else {
-    digitalWrite(statusledPin, HIGH);
+    digitalWrite(kPinAccess, HIGH);
     delay(100);
-    digitalWrite(statusledPin, LOW);
+    digitalWrite(kPinAccess, LOW);
     delay(1000);
   }
 #else  // USE_SDIO
@@ -1617,9 +1668,9 @@ void print_hd_info(void)
     Serial.print(F("Error card"));
     led_err();
   }  else {
-    digitalWrite(statusledPin, HIGH);
+    digitalWrite(kPinAccess, HIGH);
     delay(100);
-    digitalWrite(statusledPin, LOW);
+    digitalWrite(kPinAccess, LOW);
     delay(10);
   }
 #endif */
@@ -1650,24 +1701,24 @@ int rotate_boot (void)
   op[3] = devices[ 3 ].sdf.isOpen();
   
   // wait for release
-  while( digitalRead(ejectPin) == HIGH ) {
+  while( digitalRead(kEjectPin) == LOW ) {
     // ultrafast flash while pressed
-    digitalWrite( statusledPin, HIGH );
+    digitalWrite( kLED_Yellow, HIGH );
     delay( 20 );
-    digitalWrite( statusledPin, LOW );
+    digitalWrite( kLED_Yellow, LOW );
     delay( 20 );
   }
   delay( 50 ); // debounce
 
   while( 1 )
   {
-    if( digitalRead(ejectPin) == HIGH ) {
+    if( digitalRead(kEjectPin) == LOW ) {
       // wait for release
-      while( digitalRead(ejectPin) == HIGH ) {
+      while( digitalRead(kEjectPin) == LOW ) {
         // ultrafast flash while pressed
-        digitalWrite( statusledPin, HIGH );
+        digitalWrite( kLED_Yellow, HIGH );
         delay( 20 );
-        digitalWrite( statusledPin, LOW );
+        digitalWrite( kLED_Yellow, LOW );
         delay( 20 );
       }
       delay( 50 ); // debounce
@@ -1687,9 +1738,9 @@ int rotate_boot (void)
         digitalWrite( leds[ 2 ], LOW);
         digitalWrite( leds[ 3 ], LOW);
         
-        digitalWrite(statusledPin, HIGH);
+        digitalWrite(kLED_Yellow, HIGH);
         delay( 50 );
-        digitalWrite(statusledPin, LOW);
+        digitalWrite(kLED_Yellow, LOW);
         delay( 50 );
       } 
 
@@ -1705,19 +1756,13 @@ int rotate_boot (void)
     digitalWrite( leds[ 2 ], op[2] );
     digitalWrite( leds[ 3 ], op[3] );
 
-    // flash to show the active partition
-    for (np=0;np<(initPartition+1);np++) {
-      digitalWrite(statusledPin,HIGH);
-      digitalWrite(leds[ initPartition ], HIGH);
-      delay(200);  
-       
-      digitalWrite(statusledPin,LOW);
-      digitalWrite(leds[ initPartition ], LOW);
-      delay(100);   
-    }
+    // flash the active partition
+    digitalWrite(kLED_Yellow,HIGH);
     digitalWrite(leds[ initPartition ], HIGH);
-    delay(600);
+    if( digitalRead(kEjectPin) != LOW ) delay(200);
+    digitalWrite(kLED_Yellow,LOW);
     digitalWrite(leds[ initPartition ], LOW);
+    if( digitalRead(kEjectPin) != LOW ) delay(100);
   }
 }
 
@@ -1757,7 +1802,7 @@ int rotate_boot (void)
   }
 
   eeprom_write_byte(0, initPartition);
-  digitalWrite(statusledPin, HIGH);
+  digitalWrite(kPinAccess, HIGH);
 
 #ifdef DO_SERIAL_OUTPUT
   Serial.print(F("\r\nChanging boot partition to: "));
@@ -1765,9 +1810,9 @@ int rotate_boot (void)
 #endif
  while (1){
    for (i=0;i<(initPartition+1);i++) {
-     digitalWrite(statusledPin,HIGH);
+     digitalWrite(kPinAccess,HIGH);
      delay(200);   
-     digitalWrite(statusledPin,LOW);
+     digitalWrite(kPinAccess,LOW);
      delay(100);   
    }
    delay(600);
@@ -1788,18 +1833,11 @@ int rotate_boot (void)
 //
 //*****************************************************************************
 
-void drive_leds( uint8_t states )
-{
-  digitalWrite(kLED_D0, (states & 0x01) ? HIGH : LOW );
-  digitalWrite(kLED_D1, (states & 0x02) ? HIGH : LOW );
-  digitalWrite(kLED_D2, (states & 0x04) ? HIGH : LOW );
-  digitalWrite(kLED_D3, (states & 0x08) ? HIGH : LOW );
-}
-
 void led_err( uint8_t errorCode )
 {
   int i = 0;
   interrupts();
+  if( errorCode & 0x0f == 0 ) { errorCode = 0x0f; }
 
 #ifdef DO_SERIAL_OUTPUT
   Serial.print(F("\r\nError: "));
@@ -1807,16 +1845,24 @@ void led_err( uint8_t errorCode )
 #endif
 
   for (;;) { /*i = 0; i < 5; i++) { */
-    digitalWrite(statusledPin, HIGH);
+    digitalWrite(kPinAccess, HIGH);
     digitalWrite(kPinError, LOW);
     drive_leds( errorCode );
     delay(100);
 
-    digitalWrite(statusledPin, LOW);
+    digitalWrite(kPinAccess, LOW);
     digitalWrite(kPinError, HIGH);
     drive_leds( 0 );
     delay(100);
   }
+}
+
+void drive_leds( uint8_t states )
+{
+  digitalWrite(kLED_D0, (states & 0x01) ? HIGH : LOW );
+  digitalWrite(kLED_D1, (states & 0x02) ? HIGH : LOW );
+  digitalWrite(kLED_D2, (states & 0x04) ? HIGH : LOW );
+  digitalWrite(kLED_D3, (states & 0x08) ? HIGH : LOW );
 }
 
 
