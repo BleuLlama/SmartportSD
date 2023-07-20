@@ -2,7 +2,12 @@
 
 This is an enhancement of the SmartportSD 1.15 project which can be found over on [Gitlab](https://gitlab.com/tersteeg/smartportsd).  
 
-The updates contained here improve the active/starting drive selection process.  It also shows the current drive selected as well.
+The updates contained here:
+
+- improve the active/starting drive selection process
+- better shows the selected drive, error codes, etc
+- read and write indication using two separate LEDs
+- "backpack" enclosure STL files included for use with an Apple IIc
 
 ---
 
