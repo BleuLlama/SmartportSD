@@ -29,6 +29,7 @@
 // 1.15.A - SL/yorgle@gmail.com - 2022-07 - eject button UI changes, wiring section added
 // 1.15.B - SL/yorgle@gmail.com - 2023-07 - Additional UI tweaks
 // 1.15.C - SL/yorgle@gmail.com - 2023-07-19 - Added different Read/Write LEDs, testmode (hold eject when resetting)
+// 1.15.D - SL/yorgle@gmail.com - 2023-07-30 - reads the list of files to load from spsd_01.txt
 //
 // Apple disk interface is connected as follows:
 // wrprot = pa5 (ack) (output)
@@ -142,7 +143,7 @@ reset line so it could reset with it.  Oh well.
 #include <stdio.h>
 #include <avr/pgmspace.h>
 
-#define DO_SERIAL_OUTPUT
+#undef DO_SERIAL_OUTPUT
 
 // pin assignments
 
@@ -274,6 +275,8 @@ SdFat sdcard;
 
 //File sdf[4];
 
+// where we store the four partition filenames...
+char filenames[4][ 16 ];
 
 //------------------------------------------------------------------------------
 
@@ -286,7 +289,7 @@ void setup() {
 
 #ifdef DO_SERIAL_OUTPUT
   Serial.begin(230400);
-  Serial.print(F("\r\nSmartportSD v1.15B-SL\r\n"));
+  Serial.print(F("\r\nSmartportSD v1.15D-SL\r\n"));
 #endif
   initPartition = eeprom_read_byte(0);
   if (initPartition == 0xFF) initPartition = 0;
@@ -308,14 +311,19 @@ void setup() {
   Serial.print(freeMemory());
 #endif
 
-  String part = "PART";
+  load_partition_map_file();
+
+  //OLD String part = "PART";
   
   unsigned char showleds = 0x00;
   unsigned char showmask = 0x01;
 
   for(unsigned char i=0; i<NUM_PARTITIONS; i++){
     //TODO: get file names from EEPROM
-    open_image(devices[i], (part+(i+1)+".PO") );
+    //OLD  open_image(devices[i], (part+(i+1)+".PO") );
+    
+    open_image(devices[i], filenames[ i ] );
+    
     if(!devices[i].sdf.isOpen()){
 #ifdef DO_SERIAL_OUTPUT
       Serial.print(F("\r\nImage "));
@@ -349,6 +357,48 @@ void setup() {
   showleds = 1 << initPartition;
   drive_leds( showleds );
 }
+
+
+
+char * stripLineEnds( char * str )
+{
+  char done = 0;
+  while( !done ) {
+    char ch = str[ strlen( str )-1];
+    if( ch == '\n' || ch == '\r' ) {
+      str[ strlen( str )-1 ] = '\0';
+    } else { 
+      done = 1;
+      return str;
+    }
+  }
+
+  return str;
+}
+
+void load_partition_map_file()
+{ 
+  // borrow this file handle for the moment...
+  // for now, just load this fixed partition listing
+  devices[3].sdf = sdcard.open( "spsd_01.txt", FILE_READ);
+
+  if( devices[3].sdf.isOpen() ) { 
+    // borrow packet_buffer, use it as temp buffer for filenames...
+    int filenameno = 0;
+    
+    while( devices[3].sdf.available() && filenameno < 4) {
+      int n = devices[3].sdf.fgets( packet_buffer, sizeof( packet_buffer ) );
+      (void) stripLineEnds( packet_buffer );
+      strcpy( filenames[ filenameno ], packet_buffer );
+      filenameno++;
+    }
+
+    devices[3].sdf.close();
+  }
+
+  packet_buffer[0] = 0; // reset the packet buffer?
+}
+
 
 void testmode()
 {
@@ -748,8 +798,8 @@ void loop() {
                   }else{
                     Serial.print(F("\r\nPartition file is closed!"));
                   }
-                }
 #endif
+                }
                 
                 sdstato = devices[(partition + initPartition) % NUM_PARTITIONS].sdf.read((unsigned char*) packet_buffer, 512);    //Reading block from SD Card
                 if (!sdstato) {
@@ -1787,7 +1837,7 @@ int rotate_boot (void)
 #ifdef DO_SERIAL_OUTPUT
       Serial.print(F("\r\nSelecting boot partition number "));
       Serial.print(initPartition, DEC);
-      #endif
+#endif
       break;
     }
   }
@@ -1974,7 +2024,7 @@ void mcuInit(void)
     #else  // __ARM__
     extern char *__brkval;
     #endif  // __arm__
-     
+
 int freeMemory() {
   extern int __bss_end;
   //extern int *__brkval;
@@ -1993,7 +2043,7 @@ int freeMemory() {
 // TODO: Allow image files with headers, too
 // TODO: Respect read-only bit in header
 
-bool open_image( device &d, String filename ){
+bool open_image( device &d, char * filename ){
   d.sdf = sdcard.open(filename, O_RDWR);
   
 
@@ -2015,13 +2065,13 @@ bool open_image( device &d, String filename ){
 #ifdef DO_SERIAL_OUTPUT
     Serial.print(F("\r\nFile must be an unadorned ProDOS order image with no header!"));
     Serial.print(F("\r\nThis means its size must be an exact multiple of 512!"));
-    #endif
+#endif
     return false;
   }
 
 #ifdef DO_SERIAL_OUTPUT
   Serial.print(F("\r\nFile good!"));
-  #endif
+#endif
   d.blocks = d.sdf.size() >> 9;
 
   return true;

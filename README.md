@@ -4,6 +4,20 @@ This is an enhancement of the SmartportSD 1.15 project which can be found over o
 
 The updates contained here improve the active/starting drive selection process.  It also shows the current drive selected as well.
 
+Note that as of 1.15.D, the filenames for the four partitions to be loaded
+need to be defined in a text file in the root of the SD card, named
+"spsd_01.txt".  The format of this is one filename per line, for 
+four lines. Anything after that will be ignored.  These can be 
+no longer than 15 characters long, and need to be in the root of the 
+SD card.
+
+For example, "spsd_01.txt" can be:
+
+    AppleDesktop.po
+	TotalReplay.po
+	PitchDark.po
+	DevTools.po
+
 ---
 
 Original readme follows:
